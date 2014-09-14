@@ -1467,11 +1467,9 @@ int multirom_has_kexec(void)
         // Kernel without /proc/config.gz enabled - check for /proc/atags file,
         // if it is present, there is good change kexec-hardboot is enabled too.
         ERROR("/proc/config.gz is not available!\n");
-#ifndef MR_KEXEC_DTB
-        const char *checkfile = "/proc/atags";
-#else
+
         const char *checkfile = "/proc/device-tree";
-#endif
+
         if(access(checkfile, R_OK) < 0)
         {
             ERROR("%s was not found!\n", checkfile);

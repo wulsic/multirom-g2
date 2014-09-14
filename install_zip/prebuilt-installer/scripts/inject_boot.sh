@@ -12,11 +12,23 @@ if [ ! -e "$BOOT_DEV" ]; then
     return 1
 fi
 
-dd if=$BOOT_DEV of=/tmp/boot.img
-/tmp/bbootimg -x /tmp/boot.img /tmp/bootimg.cfg /tmp/zImage /tmp/initrd.img /tmp/second.img /tmp/dtb.img
-if [ ! -f /tmp/zImage ] ; then
-    echo "Failed to extract boot.img"
-    return 1
+# Unloki boot.img
+if [ -e /tmp/boot.img ]; then
+       mv /tmp/boot.img /tmp/boot.lok
+       /tmp/loki_tool unlok /tmp/boot.lok /tmp/boot.img
+       rm -rf /tmp/boot.lok
+else
+       echo "Dump boot.img failed!" | tee /dev/kmsg
+       exit 1
+fi
+
+# Unpack boot.img
+if [ -e /tmp/boot.img ]; then
+       /tmp/unpackbootimg -i /tmp/boot.img -o /tmp/
+       rm -rf /tmp/boot.img
+else
+       echo "Unpacking boot.img failed!" | tee /dev/kmsg
+       exit 1
 fi
 
 rm -r /tmp/boot
@@ -24,20 +36,22 @@ mkdir /tmp/boot
 
 cd /tmp/boot
 rd_cmpr=-1
-magic=$($BUSYBOX hexdump -n 4 -v -e '/1 "%02X"' "../initrd.img")
-case "$magic" in
-    1F8B*)           # GZIP
-        $BUSYBOX gzip -d -c "../initrd.img" | $BUSYBOX cpio -i
-        rd_cmpr=CMPR_GZIP;
-        ;;
-    02214C18)        # LZ4
-        $LZ4 -d "../initrd.img" stdout | $BUSYBOX cpio -i
+
+if [ -e /tmp/boot.img-ramdisk.gz ]; then
+       rdcomp=/tmp/boot.img-ramdisk.gz
+       echo "New ramdisk uses GZ compression." | tee /dev/kmsg
+       $BUSYBOX gzip -d -c "../boot.img-ramdisk.gz" | $BUSYBOX cpio -i
+        rd_cmpr=CMPR_GZIP
+elif [ -e /tmp/boot.img-ramdisk.lz4 ]; then
+       rdcomp=/tmp/boot.img-ramdisk.lz4
+       echo "New ramdisk uses LZ4 compression." | tee /dev/kmsg
+        $LZ4 -d "../boot.img-ramdisk.lz4" stdout | $BUSYBOX cpio -i
         rd_cmpr=CMPR_LZ4;
-        ;;
-    *)
-        echo "invalid ramdisk magic $magic"
-        ;;
-esac
+else
+       echo "Unknown ramdisk format!" | tee /dev/kmsg
+       exit 1
+fi
+
 
 if [ rd_cmpr == -1 ] || [ ! -f /tmp/boot/init ] ; then
     echo "Failed to extract ramdisk!"
@@ -73,10 +87,10 @@ cd /tmp/boot
 
 case $rd_cmpr in
     CMPR_GZIP)
-        find . | $BUSYBOX cpio -o -H newc | $BUSYBOX gzip > "../initrd.img"
+        find . | $BUSYBOX cpio -o -H newc | $BUSYBOX gzip > "../boot.img-ramdisk.gz"
         ;;
     CMPR_LZ4)
-        find . | $BUSYBOX cpio -o -H newc | $LZ4 stdin "../initrd.img"
+        find . | $BUSYBOX cpio -o -H newc | $LZ4 stdin "../boot.img-ramdisk.lz4"
         ;;
 esac
 
@@ -93,13 +107,19 @@ if [ -f "dtb.img" ]; then
     dtb_cmd="-d dtb.img"
 fi
 
-/tmp/bbootimg --create newboot.img -f bootimg.cfg -k zImage -r initrd.img $dtb_cmd
 
-if [ ! -e "/tmp/newboot.img" ] ; then
-    echo "Failed to inject boot.img!"
-    return 1
+/tmp/mkbootimg --kernel /tmp/boot.img-zImage --ramdisk $rdcomp --cmdline "$(cat /tmp/boot.img-cmdline)" --base $(cat /tmp/boot.img-base) --pagesize $(cat /tmp/boot.img-pagesize) --ramdisk_offset $(cat /tmp/boot.img-ramdisk_offset) --tags_offset $(cat /tmp/boot.img-tags_offset) --dt /tmp/boot.img-dt --output /tmp/newboot.img
+if [ -e /tmp/newboot.img ]; then
+	echo "Boot.img created successfully!" | tee /dev/kmsg
+else
+	echo "Boot.img failed to create!" | tee /dev/kmsg
+	exit 1
 fi
 
-echo "Writing new boot.img..."
-dd bs=4096 if=/tmp/newboot.img of=$BOOT_DEV
+# Loki and flash new boot.img
+dd if=/dev/block/platform/msm_sdcc.1/by-name/aboot of=/tmp/aboot.img
+/tmp/loki_tool patch boot /tmp/aboot.img /tmp/newboot.img /tmp/newboot.lok || exit 1
+/tmp/loki_tool flash boot /tmp/newboot.lok || exit 1
+exit 0
+
 return $?
