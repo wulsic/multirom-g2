@@ -74,7 +74,7 @@ static void init_header(multirom_theme_data *t)
     int maxW = 0;
     for(i = 0; i < TAB_COUNT; ++i)
     {
-        fb_text_proto *p = fb_text_create(0, 0, C_HIGHLIGHT_TEXT, SIZE_BIG, str[i]);
+        fb_text_proto *p = fb_text_create(0, 0, C_HIGHLIGHT_TEXT, SIZE_EXTRA, str[i]);
         p->level = 110;
         tab_texts[i] = fb_text_finalize(p);
         maxW = imax(maxW, tab_texts[i]->w);
