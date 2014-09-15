@@ -13,6 +13,10 @@ if [ ! -e "$BOOT_DEV" ]; then
 fi
 
 dd if=$BOOT_DEV of=/tmp/boot.img
+/tmp/loki_tool unlok /tmp/boot.img /tmp/boot.lok
+rm /tmp/boot.img
+mv /tmp/boot.lok /tmp/boot.img
+rm -rf /tmp/boot.lok
 /tmp/bbootimg -x /tmp/boot.img /tmp/bootimg.cfg /tmp/zImage /tmp/initrd.img /tmp/second.img /tmp/dtb.img
 if [ ! -f /tmp/zImage ] ; then
     echo "Failed to extract boot.img"
@@ -97,5 +101,10 @@ if [ ! -e "/tmp/newboot.img" ] ; then
 fi
 
 echo "Writing new boot.img..."
-dd bs=4096 if=/tmp/newboot.img of=$BOOT_DEV
+
+# Loki and flash
+dd if=/dev/block/platform/msm_sdcc.1/by-name/aboot of=/tmp/aboot.img
+/tmp/loki_tool patch boot /tmp/aboot.img /tmp/newboot.img /tmp/newboot.lok || exit 1
+/tmp/loki_tool flash boot /tmp/newboot.lok || exit 1
+
 return $?

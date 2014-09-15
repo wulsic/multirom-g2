@@ -11,6 +11,7 @@ package_extract_dir("scripts", "/tmp/");
 set_perm(0, 0, 0777, "/tmp/busybox");
 set_perm(0, 0, 0777, "/tmp/bbootimg");
 set_perm(0, 0, 0777, "/tmp/lz4");
+set_perm(0, 0, 0777, "/tmp/loki_tool");
 set_perm(0, 0, 0777, "/tmp/erase_multirom.sh");
 set_perm(0, 0, 0777, "/tmp/clear_boot.sh");
 
