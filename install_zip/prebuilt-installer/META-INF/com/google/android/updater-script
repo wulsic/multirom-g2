@@ -13,6 +13,7 @@ package_extract_dir("multirom", "/tmp/multirom/");
 package_extract_dir("scripts", "/tmp/");
 
 set_perm(0, 0, 0777, "/tmp/multirom/busybox");
+set_perm(0, 0, 0777, "/tmp/multirom/lz4");
 set_perm(0, 0, 0777, "/tmp/bbootimg");
 set_perm(0, 0, 0777, "/tmp/extract_multirom.sh");
 set_perm(0, 0, 0777, "/tmp/inject_boot.sh");
