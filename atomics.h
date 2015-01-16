@@ -15,27 +15,16 @@
  * along with MultiROM.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef MR_DEVICE_HOOKS_H
-#define MR_DEVICE_HOOKS_H
+#ifndef ATOMICS_H
+#define ATOMICS_H
 
-#ifdef MR_DEVICE_HOOKS
-
-#if MR_DEVICE_HOOKS >= 1
-int mrom_hook_after_android_mounts(const char *busybox_path, const char *base_path, int type);
+#if (PLATFORM_SDK_VERSION >= 21)
+#include <stdatomic.h>
+#else
+#include <sys/atomics.h>
+typedef struct { volatile int __val; } atomic_int;
+#define ATOMIC_VAR_INIT(value) { .__val = value }
+#define atomic_compare_exchange_strong(valptr, oldval, newval) (!__atomic_cmpxchg((oldval)->__val, newval, &((valptr)->__val)))
 #endif
 
-#if MR_DEVICE_HOOKS >= 2
-void mrom_hook_before_fb_close(void);
 #endif
-
-#if MR_DEVICE_HOOKS >= 3
-void tramp_hook_before_device_init(void);
-#endif
-
-#if MR_DEVICE_HOOKS >= 4
-int mrom_hook_allow_incomplete_fstab(void);
-#endif
-
-#endif /* MR_DEVICE_HOOKS */
-
-#endif /* MR_DEVICE_HOOKS_H */

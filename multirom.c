@@ -15,12 +15,12 @@
  * along with MultiROM.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <sys/stat.h> 
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
-#include <sys/types.h> 
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -252,6 +252,7 @@ void multirom_emergency_reboot(void)
     fb_text_proto *p;
     fb_img *t;
     char *tail;
+    char *last_end;
     int cur_y;
     if(multirom_init_fb(0) < 0)
     {
@@ -271,6 +272,7 @@ void multirom_emergency_reboot(void)
     fb_add_rect(0, t->y + t->h + 5*DPI_MUL, fb_width, 1, GRAYISH);
 
     tail = klog+strlen(klog);
+    last_end = tail;
     cur_y = fb_height;
     const int start_y = (t->y + t->h + 2);
     while(tail > klog)
@@ -278,14 +280,16 @@ void multirom_emergency_reboot(void)
         --tail;
         if(*tail == '\n')
         {
-            *tail = 0;
-
-            p = fb_text_create(0, cur_y, GRAYISH, 4, tail+1);
+            p = fb_text_create(0, cur_y, GRAYISH, 4*4, NULL);
+            p->text = malloc(last_end - tail);
+            memcpy(p->text, tail + 1, last_end - (tail + 1));
+            p->text[last_end - (tail + 1)] = 0;
             p->style = STYLE_MONOSPACE;
             t = fb_text_finalize(p);
 
             cur_y -= t->h;
             t->y = cur_y;
+            last_end = tail;
 
             if(cur_y < start_y)
             {
@@ -371,7 +375,7 @@ int multirom_default_status(struct multirom_status *s)
     s->current_rom = NULL;
     s->roms = NULL;
     s->colors = 0;
-    s->brightness = 40;
+    s->brightness = MULTIROM_DEFAULT_BRIGHTNESS;
     s->enable_adb = 0;
     s->rotation = MULTIROM_DEFAULT_ROTATION;
     s->anim_duration_coef = 1.f;
@@ -487,6 +491,16 @@ int multirom_load_status(struct multirom_status *s)
 
     if(multirom_search_last_kmsg(SECOND_BOOT_KMESG) == 0)
         s->is_second_boot = 1;
+    else
+    {
+        FILE *cmdline = fopen("/proc/cmdline", "r");
+        if(cmdline)
+        {
+            if(fgets(line, sizeof(line), cmdline) && strstr(line, "mrom_kexecd=1"))
+                s->is_second_boot = 1;
+            fclose(cmdline);
+        }
+    }
 
     while((fgets(line, sizeof(line), f)))
     {
@@ -875,7 +889,7 @@ void multirom_import_internal(void)
     char path[256];
 
     // multirom
-    mkdir(multirom_dir, 0777); 
+    mkdir(multirom_dir, 0777);
 
     // roms
     snprintf(path, sizeof(path), "%s/roms", multirom_dir);
@@ -960,8 +974,12 @@ int multirom_prepare_for_boot(struct multirom_status *s, struct multirom_rom *to
     switch(type)
     {
         case ROM_DEFAULT:
+        {
+            mount("/realdata", "/data", "", MS_BIND, "");
             rom_quirks_on_android_mounted_fs(to_boot);
+            umount("/data");
             break;
+        }
         case ROM_LINUX_INTERNAL:
         case ROM_LINUX_USB:
             break;
@@ -1098,7 +1116,7 @@ static int multirom_inject_fw_mounter(char *rc_with_mount_all, struct fstab_part
     chmod(FW_MOUNTER_PATH, 0755);
 
     // prepare fstab for it
-    struct fstab *fw_fstab = fstab_create_empty(1);
+    struct fstab *fw_fstab = fstab_create_empty(2);
     fstab_add_part_struct(fw_fstab, fw_part);
     fstab_save(fw_fstab, FW_MOUNTER_FSTAB);
     fstab_destroy(fw_fstab);
@@ -1165,7 +1183,7 @@ int multirom_prep_android_mounts(struct multirom_rom *rom)
     if(has_fw)
         mkdir_with_perms("/firmware", 0771, "system", "system");
 
-    static const char *folders[2][3] = 
+    static const char *folders[2][3] =
     {
         { "system", "data", "cache" },
         { "system.img", "data.img", "cache.img" },
@@ -1273,8 +1291,16 @@ int multirom_process_android_fstab(char *fstab_name, int has_fw, struct fstab_pa
     if(!tab)
         goto exit;
 
-    if(fstab_disable_part(tab, "/system") || fstab_disable_part(tab, "/data") || fstab_disable_part(tab, "/cache"))
-        goto exit;
+    const int disable_res = fstab_disable_part(tab, "/system") + fstab_disable_part(tab, "/data") + fstab_disable_part(tab, "/cache");
+    if(disable_res != 0)
+    {
+#if MR_DEVICE_HOOKS >= 4
+        if(!mrom_hook_allow_incomplete_fstab())
+#endif
+        {
+            goto exit;
+        }
+    }
 
     if(has_fw)
     {
@@ -1287,7 +1313,7 @@ int multirom_process_android_fstab(char *fstab_name, int has_fw, struct fstab_pa
     }
 
     // Android considers empty fstab invalid
-    if(tab->count == 3 + has_fw)
+    if(tab->count <= 3 + has_fw)
     {
         INFO("fstab would be empty, adding dummy line\n");
         fstab_add_part(tab, "tmpfs", "/dummy_tmpfs", "tmpfs", "ro,nosuid,nodev", "defaults");
@@ -1353,15 +1379,28 @@ int multirom_create_media_link(void)
 
     if(api_level >= 17)
     {
-        FILE *f = fopen(LAYOUT_VERSION, "w");
-        if(!f)
+        char buf[16];
+        buf[0] = 0;
+
+        FILE *f = fopen(LAYOUT_VERSION, "r");
+        const int rewrite = (!f || !fgets(buf, sizeof(buf), f) || atoi(buf) < 2);
+
+        if(f)
+            fclose(f);
+
+        if(rewrite)
         {
-            ERROR("Failed to create .layout_version!\n");
-            return -1;
+            f = fopen(LAYOUT_VERSION, "w");
+            if(!f)
+            {
+                ERROR("Failed to create .layout_version!\n");
+                return -1;
+            }
+
+            fputc('2', f);
+            fclose(f);
+            chmod(LAYOUT_VERSION, 0600);
         }
-        fputs("2", f);
-        fclose(f);
-        chmod(LAYOUT_VERSION, 0600);
     }
 
     return 0;
@@ -2198,7 +2237,7 @@ int multirom_update_partitions(struct multirom_status *s)
 
         tok = strrchr(line, '/')+1;
         name = strndup(tok, strchr(tok, ':') - tok);
-        if(strncmp(name, "mmcblk", 6) == 0 || strncmp(name, "dm-", 3) == 0) // ignore internal nand
+        if(strncmp(name, "mmcblk0", 7) == 0 || strncmp(name, "dm-", 3) == 0) // ignore internal nand
         {
             free(name);
             goto next_itr;
